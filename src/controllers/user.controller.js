@@ -3,21 +3,24 @@ import { ApiError } from "../utils/ApiError.js";
 import { User } from "../models/user.model.js"; //agar default export hota to aaise import nahi karte hai
 import { uploadOnCloudinary } from "../utils/cloudinary.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
+import jwt from "jsonwebtoken";
 
-const  generateAccessAndRefereshTokens = async(userId) =>{
-    try {
-        const user = await User.findById(userId)
-        const accessToken = user.generateAccessTokens()
-        const refereshToken = user.generateRefereshTokens()
-        user.refereshToken =refereshToken
-        await user.save({validateBeforeSave: false})
+const generateAccessAndRefereshTokens = async (userId) => {
+  try {
+    const user = await User.findById(userId);
+    const accessToken = user.generateAccessTokens();
+    const refereshToken = user.generateRefereshTokens();
+    user.refereshToken = refereshToken;
+    await user.save({ validateBeforeSave: false });
 
-        return {accessToken, refereshToken}
-
-    } catch (error) {
-        throw new ApiError(500 ," Something went wrong while generating referesh and access token ")
-    }
-}
+    return { accessToken, refereshToken };
+  } catch (error) {
+    throw new ApiError(
+      500,
+      " Something went wrong while generating referesh and access token "
+    );
+  }
+};
 
 const registerUser = asyncHandler(async (req, res) => {
   //GET USER Details from frontend
@@ -115,7 +118,7 @@ const loginUser = asyncHandler(async (req, res) => {
 
   const { email, username, password } = req.body;
 
-  if (!username || !email) {
+  if (!username && !email) {
     throw new ApiError(400, "username or email is required");
   }
 
@@ -133,51 +136,101 @@ const loginUser = asyncHandler(async (req, res) => {
     throw new ApiError(401, "Invalid Password");
   }
 
-  const {accessToken, refereshToken}= await generateAccessAndRefereshTokens(user._id)
+  const { accessToken, refereshToken } = await generateAccessAndRefereshTokens(
+    user._id
+  );
 
-  const loggedInUser = await User.findById(user._id).select("-password -refereshToken")
+  const loggedInUser = await User.findById(user._id).select(
+    "-password -refereshToken"
+  );
 
-  const options ={
+  const options = {
     httpOnly: true,
-    secure:true
-  }
+    secure: true,
+  };
 
   return res
-  .status(200)
-  .cookie("accessToken", accessToken , options)
-  .cookie("refreshToken", refereshToken , options)
-  .json(
-    new ApiResponse(
-        200, 
+    .status(200)
+    .cookie("accessToken", accessToken, options)
+    .cookie("refreshToken", refereshToken, options)
+    .json(
+      new ApiResponse(
+        200,
         {
-            user: loggedInUser, accessToken , refereshToken
+          user: loggedInUser,
+          accessToken,
+          refereshToken,
         },
         "User logged In Successfully"
-    )
-  )
+      )
+    );
 
-  const logoutUser = asyncHandler(async(req, res)=>{
+  const logoutUser = asyncHandler(async (req, res) => {
     await User.findByIdAndUpdate(
-        req.user._id,
-        {
-            $set:{
-                refereshToken:undefiend
-            }
+      req.user._id,
+      {
+        $set: {
+          refereshToken: undefiend,
         },
-        {
-            new:true
-        }
-    )
-    const options ={
-        httpOnly: true,
-        secure:true
+      },
+      {
+        new: true,
       }
-      return res.status(200)
-      .clearCookie("accessToken",options)
-      .clearCookie("refreshToken",options)
-      .json(new ApiResponse(200 , {}, "User logged Out"))
-  })
-
+    );
+    const options = {
+      httpOnly: true,
+      secure: true,
+    };
+    return res
+      .status(200)
+      .clearCookie("accessToken", options)
+      .clearCookie("refreshToken", options)
+      .json(new ApiResponse(200, {}, "User logged Out"));
+  });
 });
 
-export { registerUser, loginUser , logoutUser};
+const refreshAccessToken = asyncHandler(async (req, res) => {
+  const incomingRefreshToken =
+    req.coookies.refereshToken || req.body.refereshToken;
+
+  if (!incomingRefreshToken) {
+    throw new ApiError(401, "unauthorized request");
+  }
+
+  try {
+    const decodedToken = jwt.verify(
+      incomingRefreshToken,
+      process.env.REFRESH_TOKEN_SECRET
+    );
+  
+    const user = await User.findById(decodedToken?._id);
+  
+    if (!user) {
+      throw new ApiError(401, "Invalid refresh token");
+    }
+  
+    if (incomingRefreshToken !== user?.refreshToken) {
+      throw new ApiError(401, "Refresh token is expired or used");
+    }
+  
+    const options = {
+      httpOnly: true,
+      secure: true,
+    };
+  
+    const { accessToken, newrefereshToken } = await generateAccessAndRefereshTokens(
+      user._id
+    );
+    return res.status(200).cookie("accessToken",accessToken,options).cookie("refreshToken",refreshToken, options).json(
+      new ApiResponse(
+          200,
+          {accessToken, refereshToken: newrefereshToken},
+          "Access token refreshed"
+      )
+    )
+  } catch (error) {
+    throw new ApiError(401 ,"Invalid refresh token")
+  }
+});
+
+export { registerUser, loginUser, logoutUser, refreshAccessToken };
